@@ -57,18 +57,25 @@ async def get_toggle_keyboard(pool: asyncpg.Pool, page: int = 0):
 
     builder = InlineKeyboardBuilder()
     for q in questions:
+        # Створюємо кнопку запуску/зупинки
         if q['is_active']:
-            builder.row(InlineKeyboardButton(text=f"🛑 Зупинити | {q['question_text'][:20]}...",
-                                             callback_data=f"stop_{q['id']}_{page}"))
+            toggle_btn = InlineKeyboardButton(text=f"🛑 Зупинити | {q['question_text'][:15]}...",
+                                              callback_data=f"stop_{q['id']}_{page}")
         else:
-            builder.row(InlineKeyboardButton(text=f"⚪️ Запустити | {q['question_text'][:20]}...",
-                                             callback_data=f"activate_{q['id']}_{page}"))
-        builder.row(InlineKeyboardButton(text="📊 Відповіді", callback_data=f"show_ans_{q['id']}_0"))
+            toggle_btn = InlineKeyboardButton(text=f"⚪️ Запустити | {q['question_text'][:15]}...",
+                                              callback_data=f"activate_{q['id']}_{page}")
+
+        # Створюємо кнопку відповідей
+        ans_btn = InlineKeyboardButton(text="📊 Відповіді", callback_data=f"show_ans_{q['id']}_0")
+
+        # Додаємо ОБИДВІ кнопки в ОДИН ряд (через кому)
+        builder.row(toggle_btn, ans_btn)
 
     nav_btns = []
     if page > 0: nav_btns.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"tgl_page_{page - 1}"))
     if offset + limit < total: nav_btns.append(
         InlineKeyboardButton(text="Вперед ➡️", callback_data=f"tgl_page_{page + 1}"))
     if nav_btns: builder.row(*nav_btns)
+
     builder.row(InlineKeyboardButton(text="❌ Закрити меню", callback_data="delete_this_msg"))
     return builder.as_markup()
