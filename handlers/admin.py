@@ -8,8 +8,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config
 from keyboards.reply import get_admin_keyboard
-from keyboards.inline import get_answers_list_keyboard, get_manage_list_keyboard, get_toggle_keyboard
-
+from keyboards.inline import get_answers_list_keyboard, get_toggle_keyboard, get_single_question_keyboard, get_pagination_keyboard
 router = Router()
 ADMIN_MENU_BUTTONS = ["📊 Переглянути відповіді", "⚙️ Список питань", "➕ Створити питання", "🚀 Запуск опитування"]
 
@@ -45,6 +44,72 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
             await asyncio.sleep(0.05)
     await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
 
+
+# 1. Головне меню списку питань (передаємо state)
+@router.message(F.text.in_(["⚙️ Список питань", "📃 Список питань"]))
+async def mng_list(message: Message, pool: asyncpg.Pool, bot: Bot, state: FSMContext):
+    if message.from_user.id not in config.ADMIN_IDS: return
+
+    # Очищаємо старі ID перед новим викликом меню
+    await state.update_data(q_msg_ids=[], nav_msg_id=None)
+    await send_questions_page(message.chat.id, bot, pool, page=0, state=state)
+
+
+# 2. Пагінація
+@router.callback_query(F.data.startswith("mng_page_"))
+async def mng_page_callback(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool, state: FSMContext):
+    page = int(callback.data.split("_")[2])
+    await send_questions_page(
+        chat_id=callback.message.chat.id,
+        bot=bot,
+        pool=pool,
+        page=page,
+        state=state,
+        nav_msg_id=callback.message.message_id
+    )
+    await callback.answer()
+
+
+# 3. Підтвердження видалення (оновлена клавіатура)
+@router.callback_query(F.data.startswith("conf_del_"))
+async def conf_del(callback: CallbackQuery):
+    q_id = callback.data.split('_')[2]
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Так, видалити", callback_data=f"delete_q_{q_id}")
+    builder.button(text="❌ Скасувати", callback_data=f"cancel_del_{q_id}")
+    await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+
+
+# 4. Скасування видалення (повертає базову кнопку)
+@router.callback_query(F.data.startswith("cancel_del_"))
+async def cancel_del(callback: CallbackQuery):
+    q_id = int(callback.data.split('_')[2])
+    await callback.message.edit_reply_markup(reply_markup=get_single_question_keyboard(q_id))
+
+
+# 5. Видалення та автоматичне оновлення сторінки
+@router.callback_query(F.data.startswith("delete_q_"))
+async def del_q(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool, state: FSMContext):
+    q_id = int(callback.data.split('_')[2])
+    async with pool.acquire() as conn:
+        await conn.execute('DELETE FROM questions WHERE id = $1', q_id)
+
+    await callback.answer("🗑 Питання успішно видалено!", show_alert=True)
+
+    # Отримуємо ID блоку навігації та оновлюємо список питань (сторінка 0)
+    state_data = await state.get_data()
+    nav_msg_id = state_data.get("nav_msg_id")
+
+    await send_questions_page(callback.message.chat.id, bot, pool, page=0, state=state, nav_msg_id=nav_msg_id)
+
+
+# Обробник пагінації
+@router.callback_query(F.data.startswith("mng_page_"))
+async def mng_page_callback(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool):
+    page = int(callback.data.split("_")[2])
+    # Передаємо message_id поточної кнопки пагінації, щоб вона оновлювалась, а не дублювалась
+    await send_questions_page(callback.message.chat.id, bot, pool, page, callback.message.message_id)
+    await callback.answer()
 
 # --- ТЕСТОВІ КОМАНДИ ---
 @router.message(Command("cleardb"))
@@ -109,6 +174,75 @@ async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Poo
                                              pool))
 
 
+# 1. Оновлена функція з використанням FSMContext для збереження ID повідомлень
+async def send_questions_page(chat_id: int, bot: Bot, pool: asyncpg.Pool, page: int, state: FSMContext,
+                              nav_msg_id: int = None):
+    limit, offset = 5, page * 5
+    async with pool.acquire() as conn:
+        total = await conn.fetchval('SELECT COUNT(*) FROM questions')
+
+        if total == 0:
+            text = "Питань поки немає."
+            if nav_msg_id:
+                await bot.edit_message_text(text, chat_id=chat_id, message_id=nav_msg_id)
+            else:
+                await bot.send_message(chat_id, text)
+            return
+
+        questions = await conn.fetch(
+            'SELECT id, question_text FROM questions ORDER BY id DESC LIMIT $1 OFFSET $2',
+            limit, offset
+        )
+
+    # Отримуємо зі стану збережені ID повідомлень з питаннями
+    state_data = await state.get_data()
+    old_msg_ids = state_data.get("q_msg_ids", [])
+    new_msg_ids = []
+
+    # 2. Редагуємо старі повідомлення або надсилаємо нові (якщо їх не вистачає)
+    for i, q in enumerate(questions):
+        text = f"📖 <b>Питання:</b>\n{q['question_text']}"
+        markup = get_single_question_keyboard(q['id'])
+
+        if i < len(old_msg_ids):
+            # Замінюємо текст в існуючому повідомленні
+            try:
+                await bot.edit_message_text(text, chat_id=chat_id, message_id=old_msg_ids[i], reply_markup=markup)
+                new_msg_ids.append(old_msg_ids[i])
+            except Exception:
+                # Якщо повідомлення було видалено вручну, надсилаємо нове
+                msg = await bot.send_message(chat_id, text, reply_markup=markup)
+                new_msg_ids.append(msg.message_id)
+        else:
+            # Якщо питань на сторінці більше, ніж було старих повідомлень
+            msg = await bot.send_message(chat_id, text, reply_markup=markup)
+            new_msg_ids.append(msg.message_id)
+
+    # 3. Видаляємо "зайві" старі повідомлення (якщо на новій сторінці менше питань, ніж на попередній)
+    for i in range(len(questions), len(old_msg_ids)):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=old_msg_ids[i])
+        except Exception:
+            pass
+
+    # 4. Редагуємо блок навігації
+    total_pages = max(1, (total + limit - 1) // limit)
+    pag_text = f"⚙️ <b>Навігація по списку</b>\nСторінка {page + 1} із {total_pages}"
+    pag_markup = get_pagination_keyboard(page, total, limit)
+
+    if nav_msg_id:
+        try:
+            await bot.edit_message_text(pag_text, chat_id=chat_id, message_id=nav_msg_id, reply_markup=pag_markup)
+        except Exception:
+            nav_msg = await bot.send_message(chat_id, pag_text, reply_markup=pag_markup)
+            nav_msg_id = nav_msg.message_id
+    else:
+        nav_msg = await bot.send_message(chat_id, pag_text, reply_markup=pag_markup)
+        nav_msg_id = nav_msg.message_id
+
+    # Зберігаємо оновлені ID повідомлень у пам'ять бота
+    await state.update_data(q_msg_ids=new_msg_ids, nav_msg_id=nav_msg_id)
+
 @router.callback_query(F.data.startswith("stop_"))
 async def stop_question(callback: CallbackQuery, pool: asyncpg.Pool):
     page = int(callback.data.split("_")[2]) if len(callback.data.split("_")) > 2 else 0
@@ -140,20 +274,19 @@ async def create_q_finish(message: Message, state: FSMContext, pool: asyncpg.Poo
     await message.answer("✨ Питання успішно додано!", reply_markup=get_admin_keyboard())
     await state.clear()
 
-
-@router.message(F.text == "⚙️ Список питань")
-async def mng_list(message: Message, pool: asyncpg.Pool):
-    if message.from_user.id not in config.ADMIN_IDS: return
-    async with pool.acquire() as conn:
-        if await conn.fetchval('SELECT COUNT(*) FROM questions') == 0: return await message.answer("Питань поки немає.")
-    await message.answer("⚙️ <b>Керування питаннями:</b>", reply_markup=await get_manage_list_keyboard(pool, page=0))
-
-
 @router.callback_query(F.data.startswith("mng_page_"))
-async def mng_page_callback(callback: CallbackQuery, pool: asyncpg.Pool):
-    await callback.message.edit_reply_markup(
-        reply_markup=await get_manage_list_keyboard(pool, int(callback.data.split("_")[2])))
+async def mng_page_callback(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool, state: FSMContext):
+    page = int(callback.data.split("_")[2])
 
+    await send_questions_page(
+        chat_id=callback.message.chat.id,
+        bot=bot,
+        pool=pool,
+        page=page,
+        state=state,
+        nav_msg_id=callback.message.message_id
+    )
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("conf_del_"))
 async def conf_del(callback: CallbackQuery):

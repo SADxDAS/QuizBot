@@ -9,6 +9,10 @@ from keyboards.reply import get_admin_keyboard
 router = Router()
 
 
+@router.message(Command("myid"))
+async def cmd_myid(message: Message):
+    await message.answer(f"🆔 Твій Telegram ID: <code>{message.from_user.id}</code>")
+    
 @router.message(Command("start"))
 async def start_cmd(message: Message, pool: asyncpg.Pool, state: FSMContext):
     await state.clear()
