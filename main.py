@@ -16,8 +16,8 @@ from handlers import admin, user
 db_pool = None
 
 
-# Функція, яка виконується ПРИ ЗАПУСКУ сервера
-async def on_startup(bot: Bot, dp: Dispatcher):
+# Змінюємо 'dp' на 'dispatcher' в аргументах функції
+async def on_startup(bot: Bot, dispatcher: Dispatcher):
     global db_pool
     print("⏳ Ініціалізація бази даних...")
     db_pool = await init_db()
@@ -27,9 +27,9 @@ async def on_startup(bot: Bot, dp: Dispatcher):
         active_q = await conn.fetchval('SELECT id FROM questions WHERE is_active = TRUE LIMIT 1')
         config.ACTIVE_QUESTION_ID = active_q
 
-    # Підключаємо мідлвари сюди (бо пул БД вже ініціалізовано)
-    dp.update.middleware(ThrottlingMiddleware(time_limit=0.8))
-    dp.update.middleware(DbSessionMiddleware(db_pool))
+    # Підключаємо мідлвари до dispatcher
+    dispatcher.update.middleware(ThrottlingMiddleware(time_limit=0.8))
+    dispatcher.update.middleware(DbSessionMiddleware(db_pool))
 
     # Кажемо Telegram'у, куди надсилати повідомлення
     await bot.set_webhook(
