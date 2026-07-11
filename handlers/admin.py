@@ -28,22 +28,33 @@ async def delete_inline_message(callback: CallbackQuery):
     await callback.message.delete()
 
 
-# --- ФОНОВА РОЗСИЛКА (ЗАХИСТ ВІД ЗАВИСАНЬ) ---
+# --- ОПТИМІЗОВАНА ФОНОВА РОЗСИЛКА ---
 async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: asyncpg.Pool):
     success_count = 0
+    delivered_data = []  # Список для масового збереження в БД
+
     for u in users:
         if u['telegram_id'] not in config.ADMIN_IDS:
             try:
                 await bot.send_message(u['telegram_id'], msg_text)
-                async with pool.acquire() as conn:
-                    await conn.execute('UPDATE users SET last_delivered_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
-                                       u['telegram_id'])
+                # Додаємо ID користувача у список для оновлення часу
+                delivered_data.append((u['telegram_id'],))
                 success_count += 1
             except Exception:
                 pass
-            await asyncio.sleep(0.05)
-    await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
 
+            # 0.05 = 20 повідомлень в секунду (безпечний ліміт Telegram)
+            await asyncio.sleep(0.05)
+
+            # РОБИМО МАСОВИЙ АПДЕЙТ В БАЗІ ОДНИМ ЗАПИТОМ!
+    if delivered_data:
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                'UPDATE users SET last_delivered_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
+                delivered_data
+            )
+
+    await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
 
 # 1. Головне меню списку питань (передаємо state)
 @router.message(F.text.in_(["⚙️ Список питань", "📃 Список питань"]))
