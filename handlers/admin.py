@@ -19,7 +19,7 @@ from keyboards.inline import (
 )
 
 router = Router()
-ADMIN_MENU_BUTTONS = ["📊 Переглянути відповіді", "⚙️ Список питань", "➕ Створити питання", "🚀 Запуск опитування"]
+ADMIN_MENU_BUTTONS = ["📊 Переглянути відповіді", "📃 Список питань", "➕ Створити питання", "🚀 Запуск опитування"]
 
 
 class AdminStates(StatesGroup):
