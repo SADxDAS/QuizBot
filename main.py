@@ -83,8 +83,10 @@ async def main():
         pass
     finally:
         # Коректне закриття при зупинці сервера Railway
-        print("🔌 Видаляємо вебхук та закриваємо з'єднання...")
-        await bot.delete_webhook()
+        print("🔌 Закриваємо з'єднання з БД...")
+
+        # ❌ РЯДОК await bot.delete_webhook() ВИДАЛЕНО ЗВІДСИ НАЗАВЖДИ!
+
         await pool.close()
         await bot.session.close()
         await runner.cleanup()
