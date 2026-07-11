@@ -1,32 +1,36 @@
 from aiogram import Router, F
 from aiogram.types import Message
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 import asyncpg
 import config
 
 router = Router()
 
-# 1. ОБРОБНИК КОМАНДИ /myid (Повинен бути першим!)
+# 1. ОБРОБНИК КОМАНДИ /start (щоб бот вітався)
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer(f"Привіт, {message.from_user.first_name}! Я бот-вікторина. Чекай на питання! 🚀")
+
+
+# 2. ОБРОБНИК КОМАНДИ /myid
 @router.message(Command("myid"))
 async def cmd_myid(message: Message):
-    # Використовуємо message.from_user.id (цифри), а не message.text (текст кнопки)
     await message.answer(f"🆔 Твій Telegram ID: <code>{message.from_user.id}</code>")
 
 
-# 2. ГАРАНТОВАНО СПРАЦЮЄ ТІЛЬКИ НА ТЕКСТ, ЯКИЙ НЕ Є КОМАНДОЮ АБО КНОПКОЮ АДМІНА
-# (Твій оптимізований обробник відповідей на вікторину)
+# 3. ОБРОБНИК БУДЬ-ЯКОГО ІНШОГО ТЕКСТУ
 @router.message(F.text & ~F.text.startswith('/'))
 async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyncpg.Pool):
-    # Якщо юзер адмін і натискає кнопку меню - ігноруємо, щоб це перехопив admin.py
+    # Пропускаємо кнопки адмін-меню
     if message.text in ["⚙️ Список питань", "📃 Список питань"] and message.from_user.id in config.ADMIN_IDS:
         return
 
     if await state.get_state() is not None: return
 
-    # БЛИСКАВИЧНА ПЕРЕВІРКА КЕШУ
+    # Перевірка на активне питання
     if not config.ACTIVE_QUESTION_ID:
-        if message.from_user.id in config.ADMIN_IDS: return
+        # Я ВИДАЛИВ РЯДОК З RETURN ДЛЯ АДМІНІВ. ТЕПЕР БОТ ВІДПОВІДАТИМЕ ВСІМ!
         await message.answer("Наразі немає активних опитувань. Відпочивайте! 😊")
         return
 
