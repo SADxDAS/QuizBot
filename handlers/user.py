@@ -1,37 +1,27 @@
 from aiogram import Router, F
 from aiogram.types import Message
-from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 import asyncpg
 import config
-from keyboards.reply import get_admin_keyboard
 
 router = Router()
 
-
+# 1. ОБРОБНИК КОМАНДИ /myid (Повинен бути першим!)
 @router.message(Command("myid"))
 async def cmd_myid(message: Message):
+    # Використовуємо message.from_user.id (цифри), а не message.text (текст кнопки)
     await message.answer(f"🆔 Твій Telegram ID: <code>{message.from_user.id}</code>")
 
-@router.message(Command("start"))
-async def start_cmd(message: Message, pool: asyncpg.Pool, state: FSMContext):
-    await state.clear()
-    async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO users (telegram_id, username) VALUES ($1, $2) 
-            ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username
-        ''', message.from_user.id, message.from_user.username)
 
-    if message.from_user.id in config.ADMIN_IDS:
-        await message.answer("Головне меню:", reply_markup=get_admin_keyboard())
-        return
-
-    await message.answer(
-        "👋 <b>Привіт!</b> Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди. Просто чекай! 😊")
-
-
+# 2. ГАРАНТОВАНО СПРАЦЮЄ ТІЛЬКИ НА ТЕКСТ, ЯКИЙ НЕ Є КОМАНДОЮ АБО КНОПКОЮ АДМІНА
+# (Твій оптимізований обробник відповідей на вікторину)
 @router.message(F.text & ~F.text.startswith('/'))
 async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyncpg.Pool):
+    # Якщо юзер адмін і натискає кнопку меню - ігноруємо, щоб це перехопив admin.py
+    if message.text in ["⚙️ Список питань", "📃 Список питань"] and message.from_user.id in config.ADMIN_IDS:
+        return
+
     if await state.get_state() is not None: return
 
     # БЛИСКАВИЧНА ПЕРЕВІРКА КЕШУ
@@ -45,21 +35,17 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
     username = message.from_user.username or message.from_user.full_name
 
     async with pool.acquire() as conn:
-        # 1. Оновлюємо дані користувача
         await conn.execute(
             'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
             user_id, username
         )
 
-        # 2. ОДНИМ ЗАПИТОМ намагаємося вставити відповідь.
-        # Якщо конфлікт (унікальність telegram_id + question_id) - нічого не робимо (DO NOTHING).
         result = await conn.execute('''
             INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
             VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - (SELECT last_delivered_at FROM users WHERE telegram_id = $1))))
             ON CONFLICT (telegram_id, question_id) DO NOTHING
         ''', user_id, username, q_id, message.text)
 
-    # Якщо result == 'INSERT 0', це означає, що рядок не вставився (спрацював DO NOTHING)
     if result == 'INSERT 0':
         await message.answer("🛑 Ви вже відповіли на це питання! Відповідь приймається лише один раз.")
     else:
