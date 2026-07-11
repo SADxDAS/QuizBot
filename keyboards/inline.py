@@ -1,0 +1,74 @@
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
+import asyncpg
+
+
+async def get_answers_list_keyboard(pool: asyncpg.Pool, page: int = 0):
+    limit, offset = 7, page * 7
+    async with pool.acquire() as conn:
+        total = await conn.fetchval('SELECT COUNT(*) FROM questions')
+        questions = await conn.fetch('SELECT id, question_text FROM questions ORDER BY id DESC LIMIT $1 OFFSET $2',
+                                     limit, offset)
+
+    builder = InlineKeyboardBuilder()
+    for q in questions:
+        builder.button(text=f"❓ {q['question_text'][:30]}...", callback_data=f"show_ans_{q['id']}_0")
+    builder.adjust(1)
+
+    nav_btns = []
+    if page > 0: nav_btns.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ans_list_page_{page - 1}"))
+    if offset + limit < total: nav_btns.append(
+        InlineKeyboardButton(text="Вперед ➡️", callback_data=f"ans_list_page_{page + 1}"))
+    if nav_btns: builder.row(*nav_btns)
+    builder.row(InlineKeyboardButton(text="❌ Закрити список", callback_data="delete_this_msg"))
+    return builder.as_markup()
+
+
+async def get_manage_list_keyboard(pool: asyncpg.Pool, page: int = 0):
+    limit, offset = 5, page * 5
+    async with pool.acquire() as conn:
+        total = await conn.fetchval('SELECT COUNT(*) FROM questions')
+        questions = await conn.fetch('SELECT id, question_text FROM questions ORDER BY id DESC LIMIT $1 OFFSET $2',
+                                     limit, offset)
+
+    builder = InlineKeyboardBuilder()
+    for q in questions:
+        builder.row(InlineKeyboardButton(text=f"📌 {q['question_text'][:35]}", callback_data="ignore"))
+        builder.row(
+            InlineKeyboardButton(text="✏️ Ред.", callback_data=f"edit_q_{q['id']}"),
+            InlineKeyboardButton(text="❌ Видал.", callback_data=f"conf_del_{q['id']}")
+        )
+
+    nav_btns = []
+    if page > 0: nav_btns.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"mng_page_{page - 1}"))
+    if offset + limit < total: nav_btns.append(
+        InlineKeyboardButton(text="Вперед ➡️", callback_data=f"mng_page_{page + 1}"))
+    if nav_btns: builder.row(*nav_btns)
+    builder.row(InlineKeyboardButton(text="❌ Закрити меню", callback_data="delete_this_msg"))
+    return builder.as_markup()
+
+
+async def get_toggle_keyboard(pool: asyncpg.Pool, page: int = 0):
+    limit, offset = 5, page * 5
+    async with pool.acquire() as conn:
+        total = await conn.fetchval('SELECT COUNT(*) FROM questions')
+        questions = await conn.fetch(
+            'SELECT id, question_text, is_active FROM questions ORDER BY id DESC LIMIT $1 OFFSET $2', limit, offset)
+
+    builder = InlineKeyboardBuilder()
+    for q in questions:
+        if q['is_active']:
+            builder.row(InlineKeyboardButton(text=f"🛑 Зупинити | {q['question_text'][:20]}...",
+                                             callback_data=f"stop_{q['id']}_{page}"))
+        else:
+            builder.row(InlineKeyboardButton(text=f"⚪️ Запустити | {q['question_text'][:20]}...",
+                                             callback_data=f"activate_{q['id']}_{page}"))
+        builder.row(InlineKeyboardButton(text="📊 Відповіді", callback_data=f"show_ans_{q['id']}_0"))
+
+    nav_btns = []
+    if page > 0: nav_btns.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"tgl_page_{page - 1}"))
+    if offset + limit < total: nav_btns.append(
+        InlineKeyboardButton(text="Вперед ➡️", callback_data=f"tgl_page_{page + 1}"))
+    if nav_btns: builder.row(*nav_btns)
+    builder.row(InlineKeyboardButton(text="❌ Закрити меню", callback_data="delete_this_msg"))
+    return builder.as_markup()

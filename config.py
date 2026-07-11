@@ -1,0 +1,19 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+admin_ids_raw = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(x.strip()) for x in admin_ids_raw.split(",") if x.strip().isdigit()]
+
+if not ADMIN_IDS and os.getenv("ADMIN_ID", "").strip().isdigit():
+    ADMIN_IDS = [int(os.getenv("ADMIN_ID").strip())]
+
+if not BOT_TOKEN or not DATABASE_URL:
+    raise ValueError("КРИТИЧНА ПОМИЛКА: Не вистачає BOT_TOKEN або DATABASE_URL у файлі .env")
+
+# Глобальний кеш для швидких відповідей
+ACTIVE_QUESTION_ID = None
