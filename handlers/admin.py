@@ -238,7 +238,7 @@ async def send_questions_page(chat_id: int, bot: Bot, pool: asyncpg.Pool, page: 
     await state.update_data(q_msg_ids=new_msg_ids, nav_msg_id=nav_msg_id)
 
 
-@router.message(F.text == "⚙️ Список питань")
+@router.message(F.text == "📃 Список питань")
 async def mng_list(message: Message, pool: asyncpg.Pool, bot: Bot, state: FSMContext):
     if message.from_user.id not in config.ADMIN_IDS: return
     await state.update_data(q_msg_ids=[], nav_msg_id=None)
