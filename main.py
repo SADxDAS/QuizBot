@@ -1,5 +1,8 @@
 import asyncio
 import os
+import logging
+import sys
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -13,52 +16,66 @@ from middlewares.db import DbSessionMiddleware
 from middlewares.throttling import ThrottlingMiddleware
 from handlers import admin, user
 
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-# 🟢 ТЕСТОВА СТОРІНКА ДЛЯ БРАУЗЕРА (HEALTHCHECK)
+db_pool = None
+
+
 async def ping_handler(request):
-    return web.Response(text="✅ Бот успішно працює і готовий приймати повідомлення від Telegram!")
+    return web.Response(text="✅ Бот успешно работает и готов принимать сообщения!")
 
 
-async def main():
-    if not config.BASE_WEBHOOK_URL:
-        raise ValueError("Критична помилка: BASE_WEBHOOK_URL не знайдено у змінних середовища!")
+async def on_startup(bot: Bot, dispatcher: Dispatcher):
+    global db_pool
+    logging.info("⏳ Инициализация базы данных...")
+    db_pool = await init_db()
 
-    print("⏳ Ініціалізація бази даних...")
-    pool = await init_db()
-
-    # Синхронізація кешу
-    async with pool.acquire() as conn:
+    # Записываем активный вопрос в Redis при старте
+    async with db_pool.acquire() as conn:
         active_q = await conn.fetchval('SELECT id FROM questions WHERE is_active = TRUE LIMIT 1')
-        config.ACTIVE_QUESTION_ID = active_q
 
-    # Вмикаємо Redis
-    print("⏳ Підключення до Redis...")
-    storage = RedisStorage.from_url(config.REDIS_URL)
-    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(storage=storage)
+    if active_q:
+        await dispatcher.storage.redis.set("active_question_id", str(active_q))
+    else:
+        await dispatcher.storage.redis.delete("active_question_id")
 
-    # Підключаємо мідлвари (Тепер вони гарантовано підключаються без помилок)
-    dp.update.middleware(ThrottlingMiddleware(time_limit=0.8))
-    dp.update.middleware(DbSessionMiddleware(pool))
+    dispatcher.update.middleware(ThrottlingMiddleware(time_limit=0.8))
+    dispatcher.update.middleware(DbSessionMiddleware(db_pool))
 
-    # Реєструємо роутери
-    dp.include_router(admin.router)
-    dp.include_router(user.router)
-
-    # 🟢 Гарантуємо, що URL завжди має https://
     base_url = config.BASE_WEBHOOK_URL.strip()
     if not base_url.startswith("http"):
         base_url = "https://" + base_url
     webhook_url = base_url.rstrip('/') + "/webhook"
 
-    print(f"⏳ Встановлюємо вебхук: {webhook_url}")
-    await bot.set_webhook(
-        url=webhook_url,
-        drop_pending_updates=True
-    )
-    print("✅ Вебхук успішно встановлено!")
+    logging.info(f"⏳ Устанавливаем вебхук: {webhook_url}")
+    await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    logging.info("✅ Вебхук успешно установлен!")
 
-    # Налаштування aiohttp веб-сервера
+
+async def on_shutdown(bot: Bot):
+    global db_pool
+    logging.info("🔌 Закрываем соединения...")
+    if db_pool:
+        await db_pool.close()
+    await bot.session.close()
+    logging.info("🛑 Сервер безопасно остановлен.")
+
+
+async def main():
+    if not config.BASE_WEBHOOK_URL:
+        raise ValueError("Критическая ошибка: BASE_WEBHOOK_URL не найден!")
+
+    logging.info("⏳ Подключение к Redis...")
+    storage = RedisStorage.from_url(config.REDIS_URL)
+    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher(storage=storage)
+
+    dp.include_router(admin.router)
+    dp.include_router(user.router)
+
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
     app = web.Application()
     app.router.add_get("/", ping_handler)
 
@@ -67,30 +84,20 @@ async def main():
 
     setup_application(app, dp, bot=bot)
 
-    # Запускаємо сервер
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=port)
 
-    print(f"🚀 Сервер запущено на порту {port}!")
+    logging.info(f"🚀 Сервер запущен на порту {port}!")
     await site.start()
 
     try:
-        # Тримаємо програму активною нескінченно
         await asyncio.Event().wait()
     except asyncio.CancelledError:
         pass
     finally:
-        # Коректне закриття при зупинці сервера Railway
-        print("🔌 Закриваємо з'єднання з БД...")
-
-        # ❌ РЯДОК await bot.delete_webhook() ВИДАЛЕНО ЗВІДСИ НАЗАВЖДИ!
-
-        await pool.close()
-        await bot.session.close()
         await runner.cleanup()
-        print("🛑 Сервер безпечно зупинено.")
 
 
 if __name__ == "__main__":
