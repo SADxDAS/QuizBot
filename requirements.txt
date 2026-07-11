@@ -2,3 +2,5 @@ aiogram
 asyncpg
 python-dotenv
 redis
+cachetools
+aiohttp
