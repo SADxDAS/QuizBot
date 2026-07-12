@@ -4,7 +4,13 @@ from config import DATABASE_URL
 
 async def init_db() -> asyncpg.Pool:
     # Зменшено max_size до 20 (Більш безпечно для Railway/Supabase тощо)
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=20)
+    pool = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=2,
+        max_size=20,
+        command_timeout=60,  # Захист від зависання запитів
+        max_inactive_connection_lifetime=300  # Кожні 5 хв очищати "мертві" підключення
+    )
 
     async with pool.acquire() as conn:
         await conn.execute('''

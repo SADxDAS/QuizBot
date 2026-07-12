@@ -150,7 +150,7 @@ async def cmd_test_data(message: Message, pool: asyncpg.Pool):
     async with pool.acquire() as conn:
         for i in range(1, 11):
             await conn.execute('INSERT INTO questions (question_text) VALUES ($1)', f'Тестове запитання №{i}')
-        q_id = await conn.fetchval('INSERT INTO questions (question_text) VALUES ($1) RETURNING id', 'КАК КАКАТЬ')
+        q_id = await conn.fetchval('INSERT INTO questions (question_text) VALUES ($1) RETURNING id', 'ЯК ЦЕ РОБИТИ...')
         for i in range(1, 71):
             await conn.execute('INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT DO NOTHING',
                                1000000 + i, f"user_{i}")
@@ -278,7 +278,9 @@ async def send_questions_page(chat_id: int, bot: Bot, pool: asyncpg.Pool, page: 
     new_msg_ids = []
 
     for i, q in enumerate(questions):
-        text = f"📖 <b>Питання:</b>\n{q['question_text']}"
+        # ДОДАНО: Екрануємо текст питання для безпечного відображення
+        safe_q_text = html.escape(q['question_text'])
+        text = f"📖 <b>Питання:</b>\n{safe_q_text}"
         markup = get_single_question_keyboard(q['id'])
         if i < len(old_msg_ids):
             try:
