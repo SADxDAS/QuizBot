@@ -48,7 +48,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher):
     webhook_url = base_url.rstrip('/') + "/webhook"
 
     logging.info(f"⏳ Устанавливаем вебхук: {webhook_url}")
-    await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    await bot.set_webhook(url=webhook_url, drop_pending_updates=False)
     logging.info("✅ Вебхук успешно установлен!")
 
 

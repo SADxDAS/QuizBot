@@ -59,10 +59,10 @@ async def handle_admin_menu_buttons(message: Message, state: FSMContext, bot: Bo
     elif text == "📊 Переглянути відповіді":
         await v_ans(message, pool)
 
-
-# --- ФОНОВА РОЗСИЛКА (ПАРАЛЕЛЬНА ТА ШВИДКА + ВИПРАВЛЕНИЙ ЧАС) ---
+# --- ФОНОВА РОЗСИЛКА (З АВТООЧИЩЕННЯМ БЛОКУВАЛЬНИКІВ) ---
 async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: asyncpg.Pool):
     success_count = 0
+    blocked_users = []  # Збираємо тих, хто нас заблокував
 
     async def send_to_user(u):
         user_id = u['telegram_id']
@@ -71,6 +71,10 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
         try:
             await bot.send_message(user_id, msg_text)
             return user_id
+        except TelegramForbiddenError:
+            # Юзер заблокував бота або видалив акаунт
+            blocked_users.append((user_id,))
+            return None
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
             try:
@@ -79,20 +83,13 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
             except Exception:
                 return None
         except Exception:
-            # Ігноруємо заблокованих юзерів
             return None
 
-    # Відправляємо батчами по 25 повідомлень
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
 
-        # КРИТИЧНЕ ВИПРАВЛЕННЯ:
-        # Ми фіксуємо час доставки в БД ПЕРЕД відправкою повідомлення цьому батчу.
-        # Це гарантує, що якщо юзер миттєво відповість, його час буде пораховано правильно,
-        # і не буде від'ємних значень чи помилок бази даних.
         batch_user_ids = [(u['telegram_id'],) for u in batch if u['telegram_id'] not in config.ADMIN_IDS]
-
         if batch_user_ids:
             async with pool.acquire() as conn:
                 await conn.executemany(
@@ -102,14 +99,21 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
 
         tasks = [send_to_user(u) for u in batch]
         results = await asyncio.gather(*tasks)
-
         success_count += sum(1 for res in results if res is not None)
 
         if i + batch_size < len(users):
-            await asyncio.sleep(1.0)  # Безпечна пауза, щоб Telegram не заблокував бота
+            await asyncio.sleep(1.0)
+
+            # ВИПРАВЛЕННЯ 2: Видаляємо мертві душі з бази, щоб не навантажувати наступні опитування
+    if blocked_users:
+        async with pool.acquire() as conn:
+            await conn.executemany('DELETE FROM users WHERE telegram_id = $1', blocked_users)
 
     try:
-        await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
+        await bot.send_message(
+            config.ADMIN_IDS[0],
+            f"✅ Розсилку завершено!\nПовідомлено: {success_count}\nВидалено мертвих душ: {len(blocked_users)}"
+        )
     except Exception:
         pass
 
@@ -304,8 +308,15 @@ async def cancel_del(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("delete_q_"))
 async def del_q(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool, state: FSMContext):
     q_id = int(callback.data.split('_')[2])
+
+    # ВИПРАВЛЕННЯ 1: Якщо ми видаляємо активне питання, зупиняємо його в Redis
+    active_q_bytes = await state.storage.redis.get("active_question_id")
+    if active_q_bytes and int(active_q_bytes.decode('utf-8')) == q_id:
+        await state.storage.redis.delete("active_question_id")
+
     async with pool.acquire() as conn:
         await conn.execute('DELETE FROM questions WHERE id = $1', q_id)
+
     await callback.answer("🗑 Питання успішно видалено!", show_alert=True)
     state_data = await state.get_data()
     nav_msg_id = state_data.get("nav_msg_id")
