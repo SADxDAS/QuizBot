@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command, CommandStart
@@ -81,6 +83,7 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
                 await message.answer("Вашу відповідь успішно прийнято! Дякую. ✅")
 
         except Exception as e:
+            logging.error(f"Помилка збереження відповіді для {user_id}: {e}", exc_info=True)
             await message.answer("🛑 Відбулася помилка при збереженні. Спробуйте ще раз або ви вже відповіли.")
 
 @router.message(F.content_type.in_({'photo', 'video', 'document', 'sticker', 'voice', 'audio', 'animation'}))
