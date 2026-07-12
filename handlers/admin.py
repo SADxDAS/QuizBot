@@ -194,6 +194,7 @@ async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Poo
         async with conn.transaction():
             await conn.execute('UPDATE questions SET is_active = FALSE')
             await conn.execute('UPDATE questions SET is_active = TRUE WHERE id = $1', q_id)
+            await conn.execute('UPDATE users SET last_delivered_at = NULL')
         q_text = await conn.fetchval('SELECT question_text FROM questions WHERE id = $1', q_id)
         users = await conn.fetch('SELECT telegram_id FROM users')
 

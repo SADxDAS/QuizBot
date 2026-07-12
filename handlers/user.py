@@ -62,20 +62,31 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.full_name
 
-    # 4. АТОМАРНА РОБОТА З БАЗОЮ (High load Safe)
+    # 4. АТОМАРНА РОБОТА З БАЗОЮ ТА ЗАХИСТ ВІД ФАЛЬСТАРТУ
     async with pool.acquire() as conn:
         await conn.execute(
             'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
             user_id, username
         )
 
+        # Дістаємо час доставки для цього конкретного користувача
+        last_delivery = await conn.fetchval('SELECT last_delivered_at FROM users WHERE telegram_id = $1', user_id)
+
+        # Якщо часу немає, значить повідомлення з питанням до нього ще не дійшло (або він фальстартує)
+        if not last_delivery and user_id not in config.ADMIN_IDS:
+            await message.answer(
+                "⚠️ <b>Фальстарт!</b>\nВи ще не отримали повідомлення з новим питанням. Будь ласка, дочекайтеся розсилки.")
+            return
+
         try:
+            # Якщо це адмін (якому розсилка не йде), ставимо час 0. Для всіх інших - точний розрахунок.
             inserted_id = await conn.fetchval('''
-                INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
-                VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - (SELECT last_delivered_at FROM users WHERE telegram_id = $1))))
-                ON CONFLICT (telegram_id, question_id) DO NOTHING
-                RETURNING id
-            ''', user_id, username, q_id, message.text)
+                    INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
+                    VALUES ($1, $2, $3, $4, 
+                            CASE WHEN $5::TIMESTAMP IS NULL THEN 0 ELSE EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - $5::TIMESTAMP)) END)
+                    ON CONFLICT (telegram_id, question_id) DO NOTHING
+                    RETURNING id
+                ''', user_id, username, q_id, message.text, last_delivery)
 
             if not inserted_id:
                 await message.answer("🛑 Ви вже відповіли на це питання! Відповідь приймається лише один раз.")
@@ -83,6 +94,7 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
                 await message.answer("Вашу відповідь успішно прийнято! Дякую. ✅")
 
         except Exception as e:
+            import logging
             logging.error(f"Помилка збереження відповіді для {user_id}: {e}", exc_info=True)
             await message.answer("🛑 Відбулася помилка при збереженні. Спробуйте ще раз або ви вже відповіли.")
 
