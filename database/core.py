@@ -29,6 +29,8 @@ async def init_db() -> asyncpg.Pool:
                 CONSTRAINT unique_user_question UNIQUE (telegram_id, question_id)
             );
         ''')
+        await conn.execute('ALTER TABLE answers DROP CONSTRAINT IF EXISTS unique_user_question;')
+        await conn.execute('ALTER TABLE answers ADD CONSTRAINT unique_user_question UNIQUE (telegram_id, question_id);')
         # Швидкісні індекси для оптимізації
         await conn.execute(
             'CREATE INDEX IF NOT EXISTS idx_questions_active ON questions (is_active) WHERE is_active = TRUE;')

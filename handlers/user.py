@@ -54,27 +54,25 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
 
     # 4. АТОМАРНА РОБОТА З БАЗОЮ (Highload Safe)
     async with pool.acquire() as conn:
-        # Спочатку швидко оновлюємо юзера (якщо змінив нік)
         await conn.execute(
             'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
             user_id, username
         )
 
-        # ЄДИНИЙ ЗАПИТ: Вставка з вбудованою перевіркою на дублікат та підрахунком часу
-        # Це вирішує проблему Race Condition (коли юзер клікає 2 рази за мілісекунду)
         try:
-            result = await conn.execute('''
+            # Використовуємо fetchval + RETURNING id.
+            # Якщо запис вже є, DO NOTHING не створить новий і fetchval поверне None.
+            inserted_id = await conn.fetchval('''
                 INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
                 VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - (SELECT last_delivered_at FROM users WHERE telegram_id = $1))))
                 ON CONFLICT (telegram_id, question_id) DO NOTHING
+                RETURNING id
             ''', user_id, username, q_id, message.text)
 
-            # Якщо INSERT не відбувся (бо такий запис вже є)
-            if result == "INSERT 0":
+            if not inserted_id:
                 await message.answer("🛑 Ви вже відповіли на це питання! Відповідь приймається лише один раз.")
             else:
                 await message.answer("Вашу відповідь успішно прийнято! Дякую. ✅")
 
         except Exception as e:
-            # На випадок непередбачених збоїв БД
             await message.answer("🛑 Відбулася помилка при збереженні. Спробуйте ще раз або ви вже відповіли.")
