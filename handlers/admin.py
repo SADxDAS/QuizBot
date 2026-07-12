@@ -178,18 +178,18 @@ async def tgl_page_callback(callback: CallbackQuery, pool: asyncpg.Pool):
 
 @router.callback_query(F.data.startswith("activate_"))
 async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Pool, state: FSMContext):
-    # --- БЛОКУВАННЯ ПОДВІЙНИХ КЛІКІВ ---
+    # 1. Перевірка замка (чи не йде зараз інша розсилка)
     is_broadcasting = await state.storage.redis.get("is_broadcasting")
     if is_broadcasting:
         return await callback.answer("⏳ Розсилка вже триває! Зачекайте.", show_alert=True)
-    await state.storage.redis.set("is_broadcasting", "1", ex=300)  # Lock на 5 хвилин максимум
 
     parts = callback.data.split("_")
     q_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
 
-    # ОНОВЛЮЄМО РЕДІС МИТТЄВО!
+    # 2. Робимо питання активним у Redis миттєво
     await state.storage.redis.set("active_question_id", str(q_id))
 
+    # 3. Оновлюємо статус у базі даних та дістаємо користувачів
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute('UPDATE questions SET is_active = FALSE')
@@ -197,14 +197,27 @@ async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Poo
         q_text = await conn.fetchval('SELECT question_text FROM questions WHERE id = $1', q_id)
         users = await conn.fetch('SELECT telegram_id FROM users')
 
+    # 4. Встановлюємо динамічний замок на час розсилки
+    # (враховуємо кількість людей: швидкість 25/сек + 2 хвилини запасу)
+    estimated_time = (len(users) // 25) + 120
+    await state.storage.redis.set("is_broadcasting", "1", ex=max(300, estimated_time))
+
+    # 5. Оновлюємо клавіатуру та сповіщаємо адміна
     await callback.message.edit_reply_markup(reply_markup=await get_toggle_keyboard(pool, page))
-
-    safe_q_text = html.escape(q_text)  # Захист від тегів у питанні
     await callback.answer("Опитування запущено!")
-    asyncio.create_task(background_broadcast(bot, users,
-                                             f"🔔 <b>УВАГА, НОВЕ ЗАПИТАННЯ!</b> 🔔\n\n❓ <b>{safe_q_text}</b>\n\n💬 <i>Просто напишіть вашу відповідь у цей чат:</i>",
-                                             pool))
 
+    # 6. Захист від HTML-ін'єкцій у тексті питання
+    import html
+    safe_q_text = html.escape(q_text)
+
+    # 7. ВИПРАВЛЕНО: Запускаємо розсилку і ПЕРЕДАЄМО redis_client останнім аргументом
+    asyncio.create_task(background_broadcast(
+        bot,
+        users,
+        f"🔔 <b>УВАГА, НОВЕ ЗАПИТАННЯ!</b> 🔔\n\n❓ <b>{safe_q_text}</b>\n\n💬 <i>Просто напишіть вашу відповідь у цей чат:</i>",
+        pool,
+        state.storage.redis  # <--- Тепер аргумент на місці!
+    ))
 
 @router.callback_query(F.data.startswith("stop_"))
 async def stop_question(callback: CallbackQuery, pool: asyncpg.Pool, state: FSMContext):
