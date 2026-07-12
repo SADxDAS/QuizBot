@@ -17,6 +17,7 @@ from keyboards.inline import (
     get_single_question_keyboard,
     get_pagination_keyboard
 )
+import html
 
 router = Router()
 ADMIN_MENU_BUTTONS = ["📊 Переглянути відповіді", "📃 Список питань", "➕ Створити питання", "🚀 Запуск опитування"]
@@ -177,11 +178,10 @@ async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Poo
 
     await callback.message.edit_reply_markup(reply_markup=await get_toggle_keyboard(pool, page))
 
-    # 2. ВИПРАВЛЕННЯ: Прибрали алерт про фоновий запуск
+    safe_q_text = html.escape(q_text)  # Захист від тегів у питанні
     await callback.answer("Опитування запущено!")
-
     asyncio.create_task(background_broadcast(bot, users,
-                                             f"🔔 <b>УВАГА, НОВЕ ЗАПИТАННЯ!</b> 🔔\n\n❓ <b>{q_text}</b>\n\n💬 <i>Просто напишіть вашу відповідь у цей чат:</i>",
+                                             f"🔔 <b>УВАГА, НОВЕ ЗАПИТАННЯ!</b> 🔔\n\n❓ <b>{safe_q_text}</b>\n\n💬 <i>Просто напишіть вашу відповідь у цей чат:</i>",
                                              pool))
 
 
@@ -205,6 +205,8 @@ async def create_q_start(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_for_new_question)
 async def create_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool):
+    if len(message.text) > 3000:
+        return await message.answer("⚠️ Текст питання занадто довгий! Максимум 3000 символів.")
     async with pool.acquire() as conn:
         if await conn.fetchval('SELECT 1 FROM questions WHERE question_text = $1', message.text):
             await state.clear()
@@ -332,6 +334,8 @@ async def edit_q_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.waiting_for_edit_question)
 async def edit_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool):
+    if len(message.text) > 3000:
+        return await message.answer("⚠️ Текст питання занадто довгий! Максимум 3000 символів.")
     q_id = (await state.get_data()).get("edit_q_id")
     async with pool.acquire() as conn:
         if await conn.fetchval('SELECT 1 FROM questions WHERE question_text = $1 AND id != $2', message.text, q_id):
@@ -373,13 +377,22 @@ async def show_ans(callback: CallbackQuery, pool: asyncpg.Pool):
             'SELECT username, answer_text, reaction_time FROM answers WHERE question_id = $1 ORDER BY reaction_time ASC NULLS LAST LIMIT $2 OFFSET $3',
             q_id, limit, offset)
 
-    text = f"📊 <b>Відповіді:</b>\n<i>{q_text}</i>\n\n"
+    safe_q_text = html.escape(q_text)
+    text = f"📊 <b>Відповіді:</b>\n<i>{safe_q_text}</i>\n\n"
     if not answers and page == 0:
         text += "Відповідей поки немає."
     else:
         for idx, ans in enumerate(answers, offset + 1):
             t = f"{ans['reaction_time']:.2f} сек" if ans['reaction_time'] else "Час невідомий"
-            text += f"<b>{idx}.</b> @{ans['username']}: {ans['answer_text']} <i>(⏱ {t})</i>\n"
+
+            # Екрануємо і обрізаємо відповідь до 120 символів, щоб не вийти за 4096 ліміт
+            safe_ans = html.escape(ans['answer_text'])
+            if len(safe_ans) > 120:
+                safe_ans = safe_ans[:120] + "..."
+
+            safe_uname = html.escape(ans['username'])
+
+            text += f"<b>{idx}.</b> @{safe_uname}: {safe_ans} <i>(⏱ {t})</i>\n"
 
     b = InlineKeyboardBuilder()
     nav = []

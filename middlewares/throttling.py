@@ -5,9 +5,7 @@ from cachetools import TTLCache
 
 
 class ThrottlingMiddleware(BaseMiddleware):
-    def __init__(self, time_limit: float = 1.0):
-        # maxsize=10000 означає, що ми тримаємо в пам'яті до 10 000 унікальних юзерів одночасно
-        # ttl=time_limit - запис живе, наприклад, 1 секунду
+    def __init__(self, time_limit: float = 0.8):
         self.limit = TTLCache(maxsize=10000, ttl=time_limit)
 
     async def __call__(
@@ -16,14 +14,20 @@ class ThrottlingMiddleware(BaseMiddleware):
             event: TelegramObject,
             data: Dict[str, Any]
     ) -> Any:
-        # Перевіряємо тільки текстові повідомлення (не натискання кнопок інлайн клавіатури)
+        user_id = None
+
+        # Перехоплюємо і текст, і натискання кнопок
         if event.message:
             user_id = event.message.from_user.id
-            if user_id in self.limit:
-                # Якщо користувач є в кеші (тобто писав менше 1 секунди тому) - просто ігноруємо
-                return
+        elif event.callback_query:
+            user_id = event.callback_query.from_user.id
 
-                # Якщо користувача немає, додаємо його в кеш
+        if user_id:
+            if user_id in self.limit:
+                # Якщо це натискання кнопки - кажемо Telegram, що ми її обробили, щоб вона не "висіла"
+                if event.callback_query:
+                    await event.callback_query.answer("Занадто швидко!", show_alert=False)
+                return
             self.limit[user_id] = None
 
         return await handler(event, data)

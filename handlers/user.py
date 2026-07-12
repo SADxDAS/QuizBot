@@ -4,6 +4,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 import asyncpg
 import config
+import html
 
 router = Router()
 
@@ -16,7 +17,8 @@ ADMIN_BUTTONS = {
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, pool: asyncpg.Pool):
-    await message.answer(f"Привіт, {message.from_user.first_name}! Я бот-вікторина. Чекай на питання! 🚀")
+    safe_name = html.escape(message.from_user.first_name)
+    await message.answer(f"Привіт, {safe_name}! Я бот-вікторина. Чекай на питання! 🚀")
 
     # Реєструємо юзера одразу при старті, щоб зняти навантаження під час вікторини
     async with pool.acquire() as conn:
