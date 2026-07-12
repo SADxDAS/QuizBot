@@ -23,7 +23,7 @@ db_pool = None
 
 
 async def ping_handler(request):
-    return web.Response(text="✅ Бот успешно работает и готов принимать сообщения!")
+    return web.Response(text="✅ Закривай сторінку, падло!")
 
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher):
