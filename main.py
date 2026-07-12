@@ -8,8 +8,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.types import ErrorEvent
 from aiohttp import web
-
+import traceback
 import config
 from database.core import init_db
 from middlewares.db import DbSessionMiddleware
@@ -60,6 +61,16 @@ async def on_shutdown(bot: Bot):
     await bot.session.close()
     logging.info("🛑 Сервер безопасно остановлен.")
 
+
+@dp.errors()
+async def global_error_handler(event: ErrorEvent):
+    # Логуємо детальну помилку, щоб ти міг її побачити в консолі Railway
+    logging.critical(f"🔥 Критична помилка під час обробки оновлення: {event.exception}")
+    logging.error(traceback.format_exc())
+
+    # Повертаємо True (це каже aiogram'у, що ми "владнали" проблему,
+    # і він поверне Telegram статус 200 OK)
+    return True
 
 async def main():
     if not config.BASE_WEBHOOK_URL:
