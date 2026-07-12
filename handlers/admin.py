@@ -3,7 +3,7 @@ import logging
 import asyncpg
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -42,31 +42,65 @@ async def close_admin_menu(callback: CallbackQuery, state: FSMContext):
         pass
 
 
-# --- ФОНОВА РОЗСИЛКА (КУЛЕНЕПРОБИВНА) ---
+# --- 1. ВИПРАВЛЕННЯ: ГОЛОВНИЙ ОБРОБНИК КНОПОК МЕНЮ (ПЕРЕБИВАЄ БУДЬ-ЯКИЙ СТАН) ---
+@router.message(F.text.in_(set(ADMIN_MENU_BUTTONS)), StateFilter("*"))
+async def handle_admin_menu_buttons(message: Message, state: FSMContext, bot: Bot, pool: asyncpg.Pool):
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.clear()
+    text = message.text
+
+    if text == "🚀 Запуск опитування":
+        await toggle_collection_menu_msg(message, pool)
+    elif text == "➕ Створити питання":
+        await create_q_start(message, state)
+    elif text == "📃 Список питань":
+        await mng_list(message, pool, bot, state)
+    elif text == "📊 Переглянути відповіді":
+        await v_ans(message, pool)
+
+
+# --- 3. ВИПРАВЛЕННЯ: ФОНОВА РОЗСИЛКА (ПАРАЛЕЛЬНА ТА ШВИДКА) ---
 async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: asyncpg.Pool):
     success_count = 0
     delivered_data = []
 
-    for u in users:
+    async def send_to_user(u):
         user_id = u['telegram_id']
         if user_id in config.ADMIN_IDS:
-            continue
+            return None
 
         try:
             await bot.send_message(user_id, msg_text)
-            delivered_data.append((user_id,))
-            success_count += 1
+            return user_id
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
-            await bot.send_message(user_id, msg_text)
-            delivered_data.append((user_id,))
-            success_count += 1
-        except TelegramForbiddenError:
-            pass
+            try:
+                await bot.send_message(user_id, msg_text)
+                return user_id
+            except Exception:
+                return None
         except Exception as e:
-            logging.error(f"Помилка розсилки для {user_id}: {e}")
+            # Ігноруємо помилки блокування, щоб не сповільнювати цикл
+            return None
 
-        await asyncio.sleep(0.04)
+    # Відправляємо батчами по 25 запитів (ліміт Telegram 30 в сек)
+    batch_size = 25
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i + batch_size]
+        tasks = [send_to_user(u) for u in batch]
+
+        # Виконуємо всі відправки батчу паралельно
+        results = await asyncio.gather(*tasks)
+
+        for res in results:
+            if res:
+                delivered_data.append((res,))
+                success_count += 1
+
+        # Робимо безпечну паузу між батчами, якщо є ще користувачі
+        if i + batch_size < len(users):
+            await asyncio.sleep(1.0)
 
     if delivered_data:
         async with pool.acquire() as conn:
@@ -74,7 +108,11 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
                 'UPDATE users SET last_delivered_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
                 delivered_data
             )
-    await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
+
+    try:
+        await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
+    except Exception:
+        pass
 
 
 # --- ТЕСТОВІ КОМАНДИ ---
@@ -105,7 +143,6 @@ async def cmd_test_data(message: Message, pool: asyncpg.Pool):
 
 
 # --- ЗАПУСК / ЗУПИНКА ОПИТУВАННЯ ---
-@router.message(F.text == "🚀 Запуск опитування")
 async def toggle_collection_menu_msg(message: Message, pool: asyncpg.Pool):
     if message.from_user.id not in config.ADMIN_IDS: return
     async with pool.acquire() as conn:
@@ -136,7 +173,10 @@ async def activate_question(callback: CallbackQuery, bot: Bot, pool: asyncpg.Poo
         users = await conn.fetch('SELECT telegram_id FROM users')
 
     await callback.message.edit_reply_markup(reply_markup=await get_toggle_keyboard(pool, page))
-    await callback.answer("Запускаю розсилку у фоновому режимі...", show_alert=True)
+
+    # 2. ВИПРАВЛЕННЯ: Прибрали алерт про фоновий запуск
+    await callback.answer("Опитування запущено!")
+
     asyncio.create_task(background_broadcast(bot, users,
                                              f"🔔 <b>УВАГА, НОВЕ ЗАПИТАННЯ!</b> 🔔\n\n❓ <b>{q_text}</b>\n\n💬 <i>Просто напишіть вашу відповідь у цей чат:</i>",
                                              pool))
@@ -154,7 +194,6 @@ async def stop_question(callback: CallbackQuery, pool: asyncpg.Pool, state: FSMC
 
 
 # --- СТВОРЕННЯ / РЕДАГУВАННЯ ---
-@router.message(F.text == "➕ Створити питання")
 async def create_q_start(message: Message, state: FSMContext):
     if message.from_user.id in config.ADMIN_IDS:
         await message.answer("Напишіть текст нового питання:")
@@ -163,9 +202,6 @@ async def create_q_start(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_for_new_question)
 async def create_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool):
-    if message.text in ADMIN_MENU_BUTTONS:
-        await state.clear()
-        return await message.answer("Дію скасовано.")
     async with pool.acquire() as conn:
         if await conn.fetchval('SELECT 1 FROM questions WHERE question_text = $1', message.text):
             await state.clear()
@@ -175,7 +211,7 @@ async def create_q_finish(message: Message, state: FSMContext, pool: asyncpg.Poo
     await state.clear()
 
 
-# --- НОВИЙ СПИСОК ПИТАНЬ З ПАГІНАЦІЄЮ (КОЖНЕ ОКРЕМО) ---
+# --- НОВИЙ СПИСОК ПИТАНЬ З ПАГІНАЦІЄЮ ---
 async def send_questions_page(chat_id: int, bot: Bot, pool: asyncpg.Pool, page: int, state: FSMContext,
                               nav_msg_id: int = None):
     limit, offset = 5, page * 5
@@ -238,7 +274,6 @@ async def send_questions_page(chat_id: int, bot: Bot, pool: asyncpg.Pool, page: 
     await state.update_data(q_msg_ids=new_msg_ids, nav_msg_id=nav_msg_id)
 
 
-@router.message(F.text == "📃 Список питань")
 async def mng_list(message: Message, pool: asyncpg.Pool, bot: Bot, state: FSMContext):
     if message.from_user.id not in config.ADMIN_IDS: return
     await state.update_data(q_msg_ids=[], nav_msg_id=None)
@@ -287,9 +322,6 @@ async def edit_q_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.waiting_for_edit_question)
 async def edit_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool):
-    if message.text in ADMIN_MENU_BUTTONS:
-        await state.clear()
-        return await message.answer("Дію скасовано.")
     q_id = (await state.get_data()).get("edit_q_id")
     async with pool.acquire() as conn:
         if await conn.fetchval('SELECT 1 FROM questions WHERE question_text = $1 AND id != $2', message.text, q_id):
@@ -301,7 +333,6 @@ async def edit_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool)
 
 
 # --- ПЕРЕГЛЯД ВІДПОВІДЕЙ (СТАТИСТИКА) ---
-@router.message(F.text == "📊 Переглянути відповіді")
 async def v_ans(message: Message, pool: asyncpg.Pool):
     if message.from_user.id not in config.ADMIN_IDS: return
     async with pool.acquire() as conn:
