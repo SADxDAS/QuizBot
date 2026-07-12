@@ -62,14 +62,9 @@ async def on_shutdown(bot: Bot):
     logging.info("🛑 Сервер безопасно остановлен.")
 
 
-@dp.errors()
 async def global_error_handler(event: ErrorEvent):
-    # Логуємо детальну помилку, щоб ти міг її побачити в консолі Railway
     logging.critical(f"🔥 Критична помилка під час обробки оновлення: {event.exception}")
     logging.error(traceback.format_exc())
-
-    # Повертаємо True (це каже aiogram'у, що ми "владнали" проблему,
-    # і він поверне Telegram статус 200 OK)
     return True
 
 async def main():
@@ -80,7 +75,7 @@ async def main():
     storage = RedisStorage.from_url(config.REDIS_URL)
     bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=storage)
-
+    dp.errors.register(global_error_handler)
     dp.include_router(admin.router)
     dp.include_router(user.router)
 
