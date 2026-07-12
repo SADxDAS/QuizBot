@@ -20,7 +20,7 @@ async def cmd_start(message: Message, pool: asyncpg.Pool):
     safe_name = html.escape(message.from_user.first_name)
     await message.answer(f"Привіт, {safe_name}! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
 
-    # Реєструємо юзера одразу при старті, щоб зняти навантаження під час вікторини
+    # Реєструємо користувача одразу при старті, щоб зняти навантаження під час вікторини
     async with pool.acquire() as conn:
         await conn.execute(
             'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
@@ -46,10 +46,10 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
     # --- НОВИЙ ЗАХИСТ: ОБМЕЖЕННЯ ДОВЖИНИ ВІДПОВІДІ ---
     if len(message.text) > 500:
         await message.answer(
-            "⚠️ Ваша відповідь занадто довга! Максимальна довжина — 500 символів. Спробуйте ще раз покоротше.")
+            "⚠️ Ваша відповідь занадто довга! Максимальна довжина — 500 символів. Спробуйте ще раз по-коротше.")
         return
 
-    # 3. ПЕРЕВІРКА АКТИВНОГО ПИТАННЯ В РЕДІСІ
+    # 3. ПЕРЕВІРКА АКТИВНОГО ПИТАННЯ В РЕДИСІ
     active_q_bytes = await state.storage.redis.get("active_question_id")
     if not active_q_bytes:
         if message.from_user.id in config.ADMIN_IDS: return
@@ -60,7 +60,7 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.full_name
 
-    # 4. АТОМАРНА РОБОТА З БАЗОЮ (Highload Safe)
+    # 4. АТОМАРНА РОБОТА З БАЗОЮ (High load Safe)
     async with pool.acquire() as conn:
         await conn.execute(
             'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
@@ -82,3 +82,10 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
 
         except Exception as e:
             await message.answer("🛑 Відбулася помилка при збереженні. Спробуйте ще раз або ви вже відповіли.")
+
+@router.message(F.content_type.in_({'photo', 'video', 'document', 'sticker', 'voice', 'audio', 'animation'}))
+async def handle_non_text(message: Message, state: FSMContext):
+    # Перевіряємо, чи йде зараз вікторина
+    active_q_bytes = await state.storage.redis.get("active_question_id")
+    if active_q_bytes:
+        await message.answer("⚠️ Будь ласка, надішліть вашу відповідь **текстом**. Медіафайли не приймаються.")

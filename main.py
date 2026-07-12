@@ -48,7 +48,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher):
     webhook_url = base_url.rstrip('/') + "/webhook"
 
     logging.info(f"⏳ Устанавливаем вебхук: {webhook_url}")
-    await bot.set_webhook(url=webhook_url, drop_pending_updates=False)
+    await bot.set_webhook(url=webhook_url, secret_token=config.WEBHOOK_SECRET, drop_pending_updates=False)
     logging.info("✅ Вебхук успешно установлен!")
 
 
@@ -79,7 +79,11 @@ async def main():
     app = web.Application()
     app.router.add_get("/", ping_handler)
 
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=config.WEBHOOK_SECRET
+    )
     webhook_requests_handler.register(app, path="/webhook")
 
     setup_application(app, dp, bot=bot)

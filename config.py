@@ -9,6 +9,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 BASE_WEBHOOK_URL = os.getenv("BASE_WEBHOOK_URL")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}" if BASE_WEBHOOK_URL else None
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "s(*%#KJu#pe$r_seK#JFDS%JOFI($cret&*^!#$*()_quiz") # Зміни на будь-який складний рядок
 admin_ids_raw = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in admin_ids_raw.split(",") if x.strip().isdigit()]
 
