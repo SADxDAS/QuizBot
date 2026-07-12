@@ -113,7 +113,7 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
     try:
         await bot.send_message(
             config.ADMIN_IDS[0],
-            f"✅ Розсилку завершено!\nПовідомлено: {success_count}\nВидалено мертвих душ: {len(blocked_users)}"
+            f"✅ Розсилку завершено!\nПовідомлено: {success_count}"
         )
     except Exception:
         pass

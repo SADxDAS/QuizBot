@@ -18,7 +18,7 @@ ADMIN_BUTTONS = {
 @router.message(CommandStart())
 async def cmd_start(message: Message, pool: asyncpg.Pool):
     safe_name = html.escape(message.from_user.first_name)
-    await message.answer(f"Привіт, {safe_name}! Я бот-вікторина. Чекай на питання! 🚀")
+    await message.answer(f"Привіт, {safe_name}! 👋 Привіт! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
 
     # Реєструємо юзера одразу при старті, щоб зняти навантаження під час вікторини
     async with pool.acquire() as conn:
@@ -43,6 +43,12 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
     if await state.get_state() is not None:
         return
 
+    # --- НОВИЙ ЗАХИСТ: ОБМЕЖЕННЯ ДОВЖИНИ ВІДПОВІДІ ---
+    if len(message.text) > 500:
+        await message.answer(
+            "⚠️ Ваша відповідь занадто довга! Максимальна довжина — 500 символів. Спробуйте ще раз покоротше.")
+        return
+
     # 3. ПЕРЕВІРКА АКТИВНОГО ПИТАННЯ В РЕДІСІ
     active_q_bytes = await state.storage.redis.get("active_question_id")
     if not active_q_bytes:
@@ -62,8 +68,6 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
         )
 
         try:
-            # Використовуємо fetchval + RETURNING id.
-            # Якщо запис вже є, DO NOTHING не створить новий і fetchval поверне None.
             inserted_id = await conn.fetchval('''
                 INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
                 VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - (SELECT last_delivered_at FROM users WHERE telegram_id = $1))))
