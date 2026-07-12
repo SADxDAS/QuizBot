@@ -369,6 +369,14 @@ async def edit_q_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.waiting_for_edit_question)
 async def edit_q_finish(message: Message, state: FSMContext, pool: asyncpg.Pool):
+    q_id = (await state.get_data()).get("edit_q_id")
+
+    # --- НОВИЙ ЗАХИСТ: ЗАБОРОНА РЕДАГУВАННЯ АКТИВНОГО ПИТАННЯ ---
+    active_q_bytes = await state.storage.redis.get("active_question_id")
+    if active_q_bytes and int(active_q_bytes.decode('utf-8')) == q_id:
+        await state.clear()
+        return await message.answer("⚠️ Неможливо редагувати питання, яке зараз запущене в ефірі!",
+                                    reply_markup=get_admin_keyboard())
     if len(message.text) > 3000:
         return await message.answer("⚠️ Текст питання занадто довгий! Максимум 3000 символів.")
     q_id = (await state.get_data()).get("edit_q_id")

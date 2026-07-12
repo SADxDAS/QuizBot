@@ -81,12 +81,12 @@ async def handle_any_text_answer(message: Message, state: FSMContext, pool: asyn
         try:
             # Якщо це адмін (якому розсилка не йде), ставимо час 0. Для всіх інших - точний розрахунок.
             inserted_id = await conn.fetchval('''
-                    INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
-                    VALUES ($1, $2, $3, $4, 
-                            CASE WHEN $5::TIMESTAMP IS NULL THEN 0 ELSE EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - $5::TIMESTAMP)) END)
-                    ON CONFLICT (telegram_id, question_id) DO NOTHING
-                    RETURNING id
-                ''', user_id, username, q_id, message.text, last_delivery)
+                            INSERT INTO answers (telegram_id, username, question_id, answer_text, reaction_time)
+                            VALUES ($1, $2, $3, $4, 
+                                    CASE WHEN $5::TIMESTAMP IS NULL THEN 0 ELSE EXTRACT(EPOCH FROM (LOCALTIMESTAMP - $5::TIMESTAMP)) END)
+                            ON CONFLICT (telegram_id, question_id) DO NOTHING
+                            RETURNING id
+                        ''', user_id, username, q_id, message.text, last_delivery)
 
             if not inserted_id:
                 await message.answer("🛑 Ви вже відповіли на це питання! Відповідь приймається лише один раз.")
