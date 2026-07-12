@@ -18,7 +18,7 @@ ADMIN_BUTTONS = {
 @router.message(CommandStart())
 async def cmd_start(message: Message, pool: asyncpg.Pool):
     safe_name = html.escape(message.from_user.first_name)
-    await message.answer(f"Привіт, {safe_name}! 👋 Привіт! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
+    await message.answer(f"Привіт, {safe_name}! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
 
     # Реєструємо юзера одразу при старті, щоб зняти навантаження під час вікторини
     async with pool.acquire() as conn:
