@@ -3,7 +3,9 @@ from config import DATABASE_URL
 
 
 async def init_db() -> asyncpg.Pool:
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=10, max_size=50)
+    # Зменшено max_size до 20 (Більш безпечно для Railway/Supabase тощо)
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=20)
+
     async with pool.acquire() as conn:
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (

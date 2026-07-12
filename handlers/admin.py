@@ -60,16 +60,14 @@ async def handle_admin_menu_buttons(message: Message, state: FSMContext, bot: Bo
         await v_ans(message, pool)
 
 
-# --- 3. ВИПРАВЛЕННЯ: ФОНОВА РОЗСИЛКА (ПАРАЛЕЛЬНА ТА ШВИДКА) ---
+# --- ФОНОВА РОЗСИЛКА (ПАРАЛЕЛЬНА ТА ШВИДКА + ВИПРАВЛЕНИЙ ЧАС) ---
 async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: asyncpg.Pool):
     success_count = 0
-    delivered_data = []
 
     async def send_to_user(u):
         user_id = u['telegram_id']
         if user_id in config.ADMIN_IDS:
             return None
-
         try:
             await bot.send_message(user_id, msg_text)
             return user_id
@@ -80,34 +78,35 @@ async def background_broadcast(bot: Bot, users: list, msg_text: str, pool: async
                 return user_id
             except Exception:
                 return None
-        except Exception as e:
-            # Ігноруємо помилки блокування, щоб не сповільнювати цикл
+        except Exception:
+            # Ігноруємо заблокованих юзерів
             return None
 
-    # Відправляємо батчами по 25 запитів (ліміт Telegram 30 в сек)
+    # Відправляємо батчами по 25 повідомлень
     batch_size = 25
     for i in range(0, len(users), batch_size):
         batch = users[i:i + batch_size]
-        tasks = [send_to_user(u) for u in batch]
 
-        # Виконуємо всі відправки батчу паралельно
+        # КРИТИЧНЕ ВИПРАВЛЕННЯ:
+        # Ми фіксуємо час доставки в БД ПЕРЕД відправкою повідомлення цьому батчу.
+        # Це гарантує, що якщо юзер миттєво відповість, його час буде пораховано правильно,
+        # і не буде від'ємних значень чи помилок бази даних.
+        batch_user_ids = [(u['telegram_id'],) for u in batch if u['telegram_id'] not in config.ADMIN_IDS]
+
+        if batch_user_ids:
+            async with pool.acquire() as conn:
+                await conn.executemany(
+                    'UPDATE users SET last_delivered_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
+                    batch_user_ids
+                )
+
+        tasks = [send_to_user(u) for u in batch]
         results = await asyncio.gather(*tasks)
 
-        for res in results:
-            if res:
-                delivered_data.append((res,))
-                success_count += 1
+        success_count += sum(1 for res in results if res is not None)
 
-        # Робимо безпечну паузу між батчами, якщо є ще користувачі
         if i + batch_size < len(users):
-            await asyncio.sleep(1.0)
-
-    if delivered_data:
-        async with pool.acquire() as conn:
-            await conn.executemany(
-                'UPDATE users SET last_delivered_at = CURRENT_TIMESTAMP WHERE telegram_id = $1',
-                delivered_data
-            )
+            await asyncio.sleep(1.0)  # Безпечна пауза, щоб Telegram не заблокував бота
 
     try:
         await bot.send_message(config.ADMIN_IDS[0], f"✅ Розсилку завершено! Повідомлено: {success_count} користувачів.")
