@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 import asyncpg
 import config
 import html
-
+from keyboards.reply import get_admin_keyboard
 router = Router()
 
 # Множина всіх текстів з кнопок адміна (працює миттєво, без навантаження)
@@ -18,16 +18,16 @@ ADMIN_BUTTONS = {
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, pool: asyncpg.Pool):
-    safe_name = html.escape(message.from_user.first_name)
-    await message.answer(f"Привіт, {safe_name}! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
-
-    # Реєструємо користувача одразу при старті, щоб зняти навантаження під час вікторини
-    async with pool.acquire() as conn:
-        await conn.execute(
-            'INSERT INTO users (telegram_id, username) VALUES ($1, $2) ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username',
-            message.from_user.id, message.from_user.username or message.from_user.full_name
+async def cmd_start(message: Message):
+    # Перевіряємо, чи є ID користувача в списку адмінів
+    if message.from_user.id in config.ADMIN_IDS:
+        await message.answer(
+            f"Привіт, {message.from_user.first_name}! Ти авторизований як адміністратор 👑\nОсь твоє меню:", 
+            reply_markup=get_admin_keyboard()
         )
+    else:
+        # Звичайне привітання для звичайних гравців (без клавіатури)
+        await message.answer(f"Привіт, {message.from_user.first_name}! Я бот-вікторина. Чекай на питання! 🚀")
 
 
 @router.message(Command("myid"))
