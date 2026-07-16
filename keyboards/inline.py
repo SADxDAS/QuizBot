@@ -85,10 +85,10 @@ async def get_toggle_keyboard(pool: asyncpg.Pool, page: int = 0):
     for q in questions:
         # Створюємо кнопку запуску/зупинки
         if q['is_active']:
-            toggle_btn = InlineKeyboardButton(text=f"🛑 | {q['question_text'][:15]}...",
+            toggle_btn = InlineKeyboardButton(text=f"🛑 Стоп | {q['question_text'][:15]}...",
                                               callback_data=f"stop_{q['id']}_{page}")
         else:
-            toggle_btn = InlineKeyboardButton(text=f"⚪️ | {q['question_text'][:15]}...",
+            toggle_btn = InlineKeyboardButton(text=f"⚪️ Запуск | {q['question_text'][:15]}...",
                                               callback_data=f"activate_{q['id']}_{page}")
 
         # Створюємо кнопку відповідей
