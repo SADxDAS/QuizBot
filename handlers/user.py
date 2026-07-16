@@ -27,7 +27,7 @@ async def cmd_start(message: Message):
         )
     else:
         # Звичайне привітання для звичайних гравців (без клавіатури)
-        await message.answer(f"Привіт, {message.from_user.first_name}! Я бот-вікторина. Чекай на питання! 🚀")
+        await message.answer(f"Привіт, {message.from_user.first_name}! Я бот для опитувань.\nКоли з'явиться нове запитання, я надішлю його сюди.\nПросто чекай! 😊")
 
 
 @router.message(Command("myid"))

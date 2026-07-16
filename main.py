@@ -23,12 +23,12 @@ db_pool = None
 
 
 async def ping_handler(request):
-    return web.Response(text="✅ Закривай сторінку, падло!")
+    return web.Response(text="✅ Все ок!")
 
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher):
     global db_pool
-    logging.info("⏳ Инициализация базы данных...")
+    logging.info("DB init...")
     db_pool = await init_db()
 
     # Записываем активный вопрос в Redis при старте
@@ -48,18 +48,18 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher):
         base_url = "https://" + base_url
     webhook_url = base_url.rstrip('/') + "/webhook"
 
-    logging.info(f"⏳ Устанавливаем вебхук: {webhook_url}")
+    logging.info(f"⏳ Installing webhook: {webhook_url}")
     await bot.set_webhook(url=webhook_url, secret_token=config.WEBHOOK_SECRET, drop_pending_updates=False)
-    logging.info("✅ Вебхук успешно установлен!")
+    logging.info("✅ Webhook installed!")
 
 
 async def on_shutdown(bot: Bot):
     global db_pool
-    logging.info("🔌 Закрываем соединения...")
+    logging.info("🔌 Closing connections...")
     if db_pool:
         await db_pool.close()
     await bot.session.close()
-    logging.info("🛑 Сервер безопасно остановлен.")
+    logging.info("🛑 Server stopped.")
 
 
 async def global_error_handler(event: ErrorEvent):
